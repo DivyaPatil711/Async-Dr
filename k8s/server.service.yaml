@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: async-doctor
+spec:
+  selector: { app: async-doctor, tier: server }
+  ports:
+    - port: 80
+      targetPort: 4000
+      protocol: TCP

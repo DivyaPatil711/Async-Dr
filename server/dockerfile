@@ -1,0 +1,29 @@
+# --- build stage ---
+FROM node:20-slim AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build   # expects "build": "tsc"
+
+# --- runtime stage ---
+FROM node:20-slim
+WORKDIR /app
+
+ENV NODE_ENV=production
+# Safe defaults; real values come from K8s Secret/ConfigMap
+ENV PORT=4000
+ENV OLLAMA_HOST=https://ollama.com
+
+# Prod deps only, then copy build
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY --from=build /app/dist ./dist
+
+# app writes to /app/jobs -> mount PVC in K8s
+RUN mkdir -p /app/jobs
+
+EXPOSE 4000
+CMD ["node", "--enable-source-maps", "dist/server.js"]

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: async-doctor
+  labels: { app: async-doctor, tier: server }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: async-doctor, tier: server } }
+  template:
+    metadata:
+      labels: { app: async-doctor, tier: server }
+    spec:
+      containers:
+        - name: server
+          # Cloud Build will substitute this image on deploy
+          image: REG-docker.pkg.dev/PROJ/REPO/server:SHORT_SHA
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef: { name: server-config }
+            - secretRef:    { name: ollama-secret }
+          volumeMounts:
+            - name: jobs
+              mountPath: /app/jobs
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "1000m", memory: "1Gi" }
+      volumes:
+        - name: jobs
+          persistentVolumeClaim:
+            claimName: jobs-pvc

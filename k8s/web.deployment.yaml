@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: async-doctor
+  labels: { app: async-doctor, tier: web }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: async-doctor, tier: web } }
+  template:
+    metadata:
+      labels: { app: async-doctor, tier: web }
+    spec:
+      containers:
+        - name: web
+          image: REG-docker.pkg.dev/PROJ/REPO/web:SHORT_SHA
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
