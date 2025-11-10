@@ -18,7 +18,7 @@ ENV OLLAMA_HOST=https://ollama.com
 
 # Prod deps only, then copy build
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --legacy-peer-deps --only=production
 
 COPY --from=build /app/dist ./dist
 
