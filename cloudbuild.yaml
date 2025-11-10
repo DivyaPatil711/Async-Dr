@@ -50,6 +50,7 @@ steps:
     ]
 
 # Substitute images in k8s yamls (REG/PROJ/REPO/SHORT_SHA)
+# Substitute images in k8s yamls
 - name: gcr.io/cloud-builders/gcloud
   entrypoint: bash
   args:
@@ -57,8 +58,8 @@ steps:
     - |
       IMG_BASE="${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}"
       find k8s -type f -name '*.yaml' -print0 | xargs -0 sed -i \
-        -e "s#REG-docker.pkg.dev/PROJ/REPO/server:SHORT_SHA#${IMG_BASE}/server:${SHORT_SHA}#g" \
-        -e "s#REG-docker.pkg.dev/PROJ/REPO/web:SHORT_SHA#${IMG_BASE}/web:${SHORT_SHA}#g"
+        -e "s#REG-docker.pkg.dev/PROJ/REPO/server:SHORT_SHA#$$IMG_BASE/server:${SHORT_SHA}#g" \
+        -e "s#REG-docker.pkg.dev/PROJ/REPO/web:SHORT_SHA#$$IMG_BASE/web:${SHORT_SHA}#g"
 
 # Apply manifests
 - name: gcr.io/cloud-builders/kubectl
