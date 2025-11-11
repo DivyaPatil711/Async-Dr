@@ -19,24 +19,35 @@
     "build:server": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.0",
     "@typescript-eslint/parser": "^5.0.0",
     "@typescript-eslint/utils": "^5.0.0",
     "@typescript-eslint/visitor-keys": "^5.0.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "commander": "^10.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "eslint": "^8.57.1",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
     "extract-zip": "^2.0.1",
+    "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "ollama": "^0.6.2"
+    "ollama": "^0.6.2",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/eslint": "^9.6.1",
     "@types/express": "^5.0.5",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^18.0.0",
+    "prisma": "^6.19.0",
     "rimraf": "^6.0.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.0.0"

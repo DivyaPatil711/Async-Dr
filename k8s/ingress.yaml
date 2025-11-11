@@ -7,22 +7,19 @@ metadata:
     kubernetes.io/ingress.class: "gce"
     kubernetes.io/ingress.allow-http: "true"
 spec:
+  ingressClassName: gce 
   rules:
     - http:
         paths:
-          # API routed to server Service
           - path: /api
             pathType: Prefix
             backend:
               service:
                 name: server
-                port:
-                  number: 80
-          # Front-end SPA
+                port: { number: 80 }
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: web
-                port:
-                  number: 80
+                port: { number: 80 }

@@ -17,6 +17,20 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+import cookieParser from 'cookie-parser';
+import { requireAuth } from './middleware/auth';
+import { standardLimiter } from './rateLimit';
+import authRouter from './auth';
+
+app.set('trust proxy', 1); // for GKE/LB client IPs
+app.use(cookieParser());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json());
+
 
 // ---------- Base path (for GKE Ingress path /api) ----------
 const API_BASE = (process.env.API_BASE || '/api').replace(/\/$/, '') || '';
@@ -208,11 +222,19 @@ function getJobRoot(jobId: string) {
   return { jobDir, root };
 }
 
-// ---------- Health ----------
+app.set('trust proxy', 1); // important behind LB/Ingress
+
+// public auth
+api.use('/auth', authRouter);
+
+// global light limiter
+api.use(standardLimiter);
+
 api.get('/health', (_req, res) => res.json({ ok: true }));
+// ---------- Health ----------
 
 // ---------- Analyze GitHub repo ----------
-api.post('/analyze-github', async (req, res) => {
+api.post('/analyze-github',requireAuth, async (req, res) => {
   const { repoUrl, branch } = req.body;
 
   if (!repoUrl || typeof repoUrl !== 'string') {
@@ -263,7 +285,7 @@ api.post('/analyze-github', async (req, res) => {
 });
 
 // ---------- Analyze ZIP upload ----------
-api.post('/analyze', uploadZip.single('project'), async (req, res) => {
+api.post('/analyze', requireAuth, uploadZip.single('project'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Missing file. Use field "project".' });
 
   const jobId = crypto.randomUUID();
@@ -293,7 +315,7 @@ api.post('/analyze', uploadZip.single('project'), async (req, res) => {
 });
 
 // ---------- Upload tracer output & merge ----------
-api.post('/jobs/:jobId/trace', uploadTrace.single('trace'), async (req, res) => {
+api.post('/jobs/:jobId/trace', requireAuth, uploadTrace.single('trace'), async (req, res) => {
   try {
     const { jobId } = req.params;
     const { jobDir, root } = getJobRoot(jobId);
@@ -340,7 +362,7 @@ function replaceFunctionInFile(absFile: string, funcStart: number, currentFunc: 
   fs.writeFileSync(absFile, next, 'utf8');
 }
 
-api.post('/jobs/:jobId/ai/fix', async (req, res) => {
+api.post('/jobs/:jobId/ai/fix', requireAuth, async (req, res) => {
   try {
     const { jobId } = req.params;
     const { file, line, rule, message, funcSnippet, funcStart, apply } = req.body || {};
@@ -392,7 +414,7 @@ api.post('/jobs/:jobId/ai/fix', async (req, res) => {
 });
 
 // ---------- Jobs ----------
-api.get('/jobs/:jobId/report', (req, res) => {
+api.get('/jobs/:jobId/report', requireAuth, (req, res) => {
   const jobDir = path.join(JOB_ROOT, req.params.jobId);
   const staticPath = path.join(jobDir, 'anti-patterns.json');
   if (!fs.existsSync(staticPath)) return res.status(404).json({ error: 'Report not found' });
@@ -417,6 +439,10 @@ api.delete('/jobs/:jobId', (req, res) => {
   } catch {
     res.status(500).json({ error: 'Failed to delete job' });
   }
+});
+
+api.get('/me', requireAuth, (req, res) => {
+  res.json({ user: req.user || null });
 });
 
 // mount router + static under API base

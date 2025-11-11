@@ -5,3 +5,5 @@ dist/
 jobs/
 .vscode/
 
+
+/src/generated/prisma

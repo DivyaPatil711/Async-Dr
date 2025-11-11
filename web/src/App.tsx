@@ -7,7 +7,7 @@ type Finding = {
   file: string; line: number; column: number; fixable: boolean;
   snippet: string; snippetStart: number;
   funcSnippet: string; funcStart: number;
-  execCount?: number; // dynamic executions
+  execCount?: number;
 };
 type Graph = { nodes: { id:string; label:string; count:number }[]; edges:{source:string;target:string}[] };
 type DynamicSummary = {
@@ -26,74 +26,216 @@ type Report = {
   dynamic?: DynamicSummary;
 };
 
+type Me = { id: string; email: string; name?: string | null };
+type LoginRes = { accessToken: string; user: Me };
+type RegisterRes = { id: string; email: string };
+
 const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:4000/api').replace(/\/$/, '');
 const API = (p: string) => `${API_BASE}${p}`;
 const ITEMS_PER_PAGE = 10;
 
+// ---- small helpers for token persistence ----
+const TOKEN_KEY = 'ad_token_v1';
+const USER_KEY  = 'ad_user_v1';
+
+function saveAuth(token: string, user: Me) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+function loadAuth(): { token: string | null; user: Me | null } {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const u = localStorage.getItem(USER_KEY);
+  return { token, user: u ? JSON.parse(u) : null };
+}
+
+
+
 export default function App() {
+  // ---------- analysis state ----------
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [data, setData] = useState<Report | null>(null);
   const [q, setQ] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [sidePanel, setSidePanel] = useState<Finding | null>(null);
+  const [trace, setTrace] = useState<File | null>(null);
 
-  // GitHub analysis states
+  // ---------- auth state ----------
+  const [{ token, user }, setAuth] = useState<{ token: string | null; user: Me | null }>(() => loadAuth());
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login'|'signup'>('login');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authErr, setAuthErr] = useState<string>('');
+
+  // ---------- GitHub analysis ----------
   const [githubUrl, setGithubUrl] = useState('');
   const [githubBranch, setGithubBranch] = useState('');
   const [analysisMode, setAnalysisMode] = useState<'upload' | 'github'>('upload');
 
-  // AI Fix states
+  // ---------- AI Fix ----------
   const [aiTarget, setAiTarget] = useState<Finding | null>(null);
   const [aiPreview, setAiPreview] = useState<string>('');
   const [aiBusy, setAiBusy] = useState(false);
 
-  // Trace upload
-  const [trace, setTrace] = useState<File | null>(null);
   const jobId = data?.jobId;
 
-  async function onUpload() {
-    if (!file) return;
-    setBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append('project', file);
-      const res = await fetch(API('/analyze'), { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: Report = await res.json();
-      setData(json);
-      setCurrentPage(1);
-    } catch (e:any) {
-      alert('Upload failed: ' + e.message);
-    } finally { setBusy(false); }
+  // attach Authorization automatically if logged in
+  function authHeaders(extra: HeadersInit = {}): HeadersInit {
+    return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
   }
 
-  async function onGithubAnalyze() {
-    if (!githubUrl.trim()) {
-      alert('Please enter a GitHub repository URL');
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch(API('/analyze-github'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoUrl: githubUrl.trim(), branch: githubBranch.trim() || undefined })
+  // on mount, try to validate token by hitting /me (non-fatal)
+  useEffect(() => {
+    const { token: t } = loadAuth();
+    if (!t) return;
+    fetch(API('/me'), { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then((me: Me) => setAuth({ token: t!, user: me }))
+      .catch(() => {
+        // token invalid -> clear
+        clearAuth();
+        setAuth({ token: null, user: null });
       });
-      if (!res.ok) {
-        const error = await res.json().catch(()=>({}));
-        throw new Error(error?.error || `HTTP ${res.status}`);
-      }
-      const json: Report = await res.json();
-      setData(json);
-      setCurrentPage(1);
-    } catch (e: any) {
-      alert('GitHub analysis failed: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  useEffect(() => {
+  const { token: t } = loadAuth();
+  if (!t) {
+    setAuthMode('login');
+    setAuthOpen(true);
+  }
+}, []);
+
+
+async function onUpload() {
+  if (!requireAuth() || !file) return;
+  setBusy(true);
+  try {
+    const fd = new FormData();
+    fd.append('project', file);
+    const res = await guardedFetch(API('/analyze'), { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await pickErr(res));
+    const json: Report = await res.json();
+    setData(json);
+    setCurrentPage(1);
+  } catch (e:any) {
+    alert('Upload failed: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+async function onGithubAnalyze() {
+  if (!requireAuth()) return;
+  if (!githubUrl.trim()) { alert('Please enter a GitHub repository URL'); return; }
+  setBusy(true);
+  try {
+    const res = await guardedFetch(API('/analyze-github'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl: githubUrl.trim(), branch: githubBranch.trim() || undefined }),
+    });
+    if (!res.ok) throw new Error(await pickErr(res));
+    const json: Report = await res.json();
+    setData(json);
+    setCurrentPage(1);
+  } catch (e:any) {
+    alert('GitHub analysis failed: ' + e.message);
+  } finally { setBusy(false); }
+}
+
+async function uploadTrace() {
+  if (!requireAuth() || !jobId || !trace) return;
+  try {
+    const fd = new FormData();
+    fd.append('trace', trace);
+    const res = await guardedFetch(API(`/jobs/${jobId}/trace`), { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(await pickErr(res));
+    const json: Report = await res.json();
+    setData(json);
+  } catch (e:any) {
+    alert('Trace upload failed: ' + e.message);
+  }
+}
+
+async function openAiFix(f: Finding) {
+  if (!requireAuth() || !jobId) return;
+  setAiTarget(f);
+  setAiPreview('');
+  setAiBusy(true);
+  try {
+    const res = await guardedFetch(API(`/jobs/${jobId}/ai/fix`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: f.file, line: f.line, rule: f.rule, message: f.message,
+        funcSnippet: f.funcSnippet, funcStart: f.funcStart, apply: false
+      }),
+    });
+    if (!res.ok) throw new Error(await pickErr(res));
+    const json = await res.json();
+    setAiPreview(String(json.fixedFunction || json.fixed_function || ''));
+  } catch (e:any) {
+    alert('AI preview failed: ' + e.message);
+    setAiTarget(null);
+  } finally { setAiBusy(false); }
+}
+
+async function applyAiFix() {
+  if (!requireAuth() || !jobId || !aiTarget) return;
+  setAiBusy(true);
+  try {
+    const res = await guardedFetch(API(`/jobs/${jobId}/ai/fix`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: aiTarget.file, line: aiTarget.line, rule: aiTarget.rule, message: aiTarget.message,
+        funcSnippet: aiTarget.funcSnippet, funcStart: aiTarget.funcStart, apply: true
+      }),
+    });
+    if (!res.ok) throw new Error(await pickErr(res));
+    const json = await res.json();
+    if (json.report) setData(json.report);
+    setAiTarget(null);
+    setAiPreview('');
+  } catch (e:any) {
+    alert('Apply failed: ' + e.message);
+  } finally { setAiBusy(false); }
+}
+
+
+  // ---- auth gate + 401 auto-handling ----
+function requireAuth(): boolean {
+  if (!user) {
+    setAuthMode('login');
+    setAuthOpen(true);
+    return false;
+  }
+  return true;
+}
+
+async function guardedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  // inject Authorization and catch 401
+  const res = await fetch(input, {
+    ...init,
+    headers: authHeaders(init.headers || {}),
+  });
+  if (res.status === 401) {
+    // drop creds and force sign-in
+    clearAuth();
+    setAuth({ token: null, user: null });
+    setAuthMode('login');
+    setAuthOpen(true);
+    throw new Error('Please sign in to continue.');
+  }
+  return res;
+}
+
+
+  // ---------- search + paging ----------
   const filtered = useMemo(() => {
     if (!data) return [];
     const s = q.trim().toLowerCase();
@@ -124,76 +266,43 @@ export default function App() {
     }
   }, [currentPage, totalPages]);
 
-  async function openAiFix(f: Finding) {
-    if (!jobId) return;
-    setAiTarget(f);
-    setAiPreview('');
-    setAiBusy(true);
+  // ---------- auth actions ----------
+  function openLogin() { setAuthMode('login'); setAuthErr(''); setAuthOpen(true); }
+  function openSignup() { setAuthMode('signup'); setAuthErr(''); setAuthOpen(true); }
+  function logout() { clearAuth(); setAuth({ token: null, user: null }); }
+
+  async function handleLogin(email: string, password: string) {
+    setAuthBusy(true); setAuthErr('');
     try {
-      const res = await fetch(API(`/jobs/${jobId}/ai/fix`), {
+      const res = await fetch(API('/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: f.file,
-          line: f.line,
-          rule: f.rule,
-          message: f.message,
-          funcSnippet: f.funcSnippet,
-          funcStart: f.funcStart,
-          apply: false
-        })
+        body: JSON.stringify({ email, password })
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setAiPreview(String(json.fixedFunction || json.fixed_function || ''));
+      if (!res.ok) throw new Error(await pickErr(res));
+      const json: LoginRes = await res.json();
+      saveAuth(json.accessToken, json.user);
+      setAuth({ token: json.accessToken, user: json.user });
+      setAuthOpen(false);
     } catch (e:any) {
-      alert('AI preview failed: ' + e.message);
-      setAiTarget(null);
-    } finally {
-      setAiBusy(false);
-    }
+      setAuthErr(e.message || 'Login failed');
+    } finally { setAuthBusy(false); }
   }
 
-  async function applyAiFix() {
-    if (!jobId || !aiTarget) return;
-    setAiBusy(true);
+  async function handleSignup(name: string, email: string, password: string) {
+    setAuthBusy(true); setAuthErr('');
     try {
-      const res = await fetch(API(`/jobs/${jobId}/ai/fix`), {
+      const res = await fetch(API('/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: aiTarget.file,
-          line: aiTarget.line,
-          rule: aiTarget.rule,
-          message: aiTarget.message,
-          funcSnippet: aiTarget.funcSnippet,
-          funcStart: aiTarget.funcStart,
-          apply: true
-        })
+        body: JSON.stringify({ name, email, password })
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (json.report) setData(json.report);
-      setAiTarget(null);
-      setAiPreview('');
+      if (!res.ok) throw new Error(await pickErr(res));
+      // after sign-up, auto login
+      await handleLogin(email, password);
     } catch (e:any) {
-      alert('Apply failed: ' + e.message);
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
-  async function uploadTrace() {
-    if (!jobId || !trace) return;
-    try {
-      const fd = new FormData();
-      fd.append('trace', trace);
-      const res = await fetch(API(`/jobs/${jobId}/trace`), { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: Report = await res.json();
-      setData(json);
-    } catch (e:any) {
-      alert('Trace upload failed: ' + e.message);
+      setAuthErr(e.message || 'Sign up failed');
+      setAuthBusy(false);
     }
   }
 
@@ -201,12 +310,26 @@ export default function App() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">Async Doctor</div>
-        <div className="right">
-          <a className="muted" href="https://icse22-drasync" target="_blank" rel="noreferrer">About</a>
+        <div className="right" style={{display:'flex', gap:8, alignItems:'center'}}>
+          {user ? (
+            <>
+              <span className="muted">Hi, {user.name || user.email}</span>
+              <button className="btn btn-sm" onClick={logout}>Logout</button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-sm" onClick={openLogin}>Sign in</button>
+              <button className="btn btn-sm primary" onClick={openSignup}>Sign up</button>
+            </>
+          )}
         </div>
       </header>
 
       <main className="container">
+          {!user ? (
+    <LockedView onSignIn={openLogin} onSignUp={openSignup} />
+  ) : (
+    <>
         <section className="card hero">
           <div className="mode-toggle">
             <button
@@ -241,6 +364,7 @@ export default function App() {
               <button className="btn primary" onClick={onUpload}>
                 {busy ? 'Analyzing…' : 'Analyze ZIP'}
               </button>
+              {!user && <div className="muted" style={{marginTop:8}}>Tip: Sign in to attach changes to your account.</div>}
             </div>
           )}
 
@@ -267,6 +391,7 @@ export default function App() {
               <button className="btn primary" onClick={onGithubAnalyze}>
                 {busy ? 'Analyzing…' : 'Analyze Repository'}
               </button>
+              {!user && <div className="muted" style={{marginTop:8}}>Tip: Sign in to attach changes to your account.</div>}
             </div>
           )}
 
@@ -358,9 +483,33 @@ export default function App() {
             )}
           </>
         )}
+    </>
+  )}
       </main>
+
+      {authOpen && (
+        <AuthModal
+          mode={authMode}
+          busy={authBusy}
+          error={authErr}
+          onClose={()=> setAuthOpen(false)}
+          onLogin={handleLogin}
+          onSignup={handleSignup}
+          switchMode={(m)=> { setAuthMode(m); setAuthErr(''); }}
+        />
+      )}
     </div>
   );
+}
+
+/* ---------- tiny error helper ---------- */
+async function pickErr(res: Response) {
+  try {
+    const js = await res.json();
+    return js?.error || js?.message || `HTTP ${res.status}`;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
 }
 
 /* ---------- UI bits ---------- */
@@ -636,7 +785,7 @@ function DiffView({ oldText, newText, oldStart, newStart }:{
   );
 }
 
-/* ---------- Graph ---------- */
+/* ---------- Graph & CodeBlock ---------- */
 
 function CodeBlock({ code, start, highlight }:{code:string; start:number; highlight:number}) {
   const lines = code.split('\n');
@@ -805,6 +954,9 @@ function GraphView({ graph }: { graph: Graph }) {
     </div>
   );
 }
+
+/* ---------- AI modal ---------- */
+
 function AIFixModal({
   finding, preview, busy, onCancel, onApply
 }: {
@@ -847,3 +999,90 @@ function AIFixModal({
     </div>
   );
 }
+
+/* ---------- Auth Modal ---------- */
+
+function AuthModal({
+  mode, busy, error, onClose, onLogin, onSignup, switchMode
+}: {
+  mode: 'login' | 'signup';
+  busy: boolean;
+  error?: string;
+  onClose: () => void;
+  onLogin: (email: string, password: string) => void;
+  onSignup: (name: string, email: string, password: string) => void;
+  switchMode: (m: 'login' | 'signup') => void;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (mode === 'login') onLogin(email.trim(), pw);
+    else onSignup(name.trim(), email.trim(), pw);
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="card modal" onClick={e => e.stopPropagation()} style={{maxWidth: 420}}>
+        <div className="modal-head">
+          <h3 style={{margin:0}}>{mode === 'login' ? 'Sign in' : 'Create account'}</h3>
+          <div className="modal-actions">
+            <button className="btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="auth-form">
+          {mode === 'signup' && (
+            <div className="field">
+              <label>Name</label>
+              <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/>
+            </div>
+          )}
+          <div className="field">
+            <label>Email</label>
+            <input className="input" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email" required/>
+          </div>
+          <div className="field">
+            <label>Password</label>
+            <input className="input" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" type="password" required/>
+          </div>
+
+          {!!error && <div className="error">{error}</div>}
+
+          <div className="auth-actions">
+            <button type="submit" className="btn primary" disabled={busy}>
+              {busy ? (mode === 'login' ? 'Signing in…' : 'Creating…') : (mode === 'login' ? 'Sign in' : 'Sign up')}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => switchMode(mode === 'login' ? 'signup' : 'login')}
+              disabled={busy}
+            >
+              {mode === 'login' ? 'Create an account' : 'Have an account? Sign in'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function LockedView({ onSignIn, onSignUp }: { onSignIn: () => void; onSignUp: () => void }) {
+  return (
+    <section className="card hero" style={{textAlign:'center', padding:'48px 32px'}}>
+      <div style={{fontSize:48, opacity:.8, marginBottom:16}}>🔒</div>
+      <h2 style={{margin:'0 0 8px'}}>Sign in to use Async Doctor</h2>
+      <p className="muted" style={{margin:'0 0 20px'}}>
+        You must be logged in to analyze projects, upload traces, and apply AI fixes.
+      </p>
+      <div style={{display:'flex', gap:12, justifyContent:'center'}}>
+        <button className="btn" onClick={onSignIn}>Sign in</button>
+        <button className="btn primary" onClick={onSignUp}>Create account</button>
+      </div>
+    </section>
+  );
+}
+

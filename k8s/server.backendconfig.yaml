@@ -1,0 +1,13 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: server-backendconfig
+  namespace: async-doctor
+spec:
+  healthCheck:
+    checkIntervalSec: 5
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+    requestPath: /health
+    port: 80   # hits Service:80 -> targetPort:4000 in the Pod

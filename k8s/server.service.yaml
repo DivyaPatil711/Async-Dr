@@ -3,6 +3,9 @@ kind: Service
 metadata:
   name: server
   namespace: async-doctor
+  annotations:
+    cloud.google..com/neg: '{"ingress": true}'
+    beta.cloud.google.com/backend-config: '{"ports": {"80":"server-backendconfig"}}'
 spec:
   selector: { app: async-doctor, tier: server }
   ports:
