@@ -28,7 +28,7 @@ type Report = {
 
 type Me = { id: string; email: string; name?: string | null };
 type LoginRes = { accessToken: string; user: Me };
-type RegisterRes = { id: string; email: string };
+// type RegisterRes = { id: string; email: string };
 
 const API_BASE = (import.meta.env.VITE_API_BASE || 'http://localhost:4000/api').replace(/\/$/, '');
 const API = (p: string) => `${API_BASE}${p}`;

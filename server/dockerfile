@@ -26,9 +26,14 @@ FROM node:20-slim
 WORKDIR /app
 
 ENV NODE_ENV=production
-# Safe defaults; real values come from K8s Secret/ConfigMap
 ENV PORT=4000
 ENV OLLAMA_HOST=https://ollama.com
+ENV ACCESS_TOKEN_EXPIRES_IN=15m
+ENV REFRESH_TOKEN_EXPIRES_IN=30d
+ENV REFRESH_COOKIE_NAME=rt
+ENV REFRESH_COOKIE_PATH=/api/auth/refresh
+ENV RATE_LIMIT_WINDOW_MS=60000
+ENV RATE_LIMIT_MAX=100
 
 # Copy package files
 COPY package*.json ./
