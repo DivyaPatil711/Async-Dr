@@ -5,21 +5,29 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (including Prisma CLI)
+# Install dependencies
 RUN npm install --legacy-peer-deps
 
-# Copy Prisma schema
+# Copy config files BEFORE Prisma generation
+COPY tsconfig.json ./
 COPY prisma ./prisma
 
-# Generate Prisma Client BEFORE building TypeScript
-RUN npx prisma generate
+# CRITICAL: Clean and generate fresh
+RUN rm -rf node_modules/.prisma && \
+    rm -rf node_modules/@prisma && \
+    npx prisma generate
 
-# Copy source and config
-COPY tsconfig.json ./
+# Copy source AFTER Prisma generation
 COPY src ./src
 
-# Now build TypeScript (Prisma client exists now)
+# Build
 RUN npm run build
+
+# Debug: Show what was generated
+RUN echo "=== Prisma Client Check ===" && \
+    (head -5 src/generated/prisma/client/index.js 2>/dev/null || \
+     head -5 node_modules/.prisma/client/index.js 2>/dev/null || \
+     echo "No Prisma client found")
 
 # --- runtime stage ---
 FROM node:20-slim
@@ -35,22 +43,18 @@ ENV REFRESH_COOKIE_PATH=/api/auth/refresh
 ENV RATE_LIMIT_WINDOW_MS=60000
 ENV RATE_LIMIT_MAX=100
 
-# Copy package files
 COPY package*.json ./
-
-# Install production dependencies only
 RUN npm install --legacy-peer-deps --only=production
 
-# Copy Prisma schema for runtime
+COPY tsconfig.json ./
 COPY prisma ./prisma
 
-# Generate Prisma Client for production
+# Generate Prisma for production
 RUN npx prisma generate
 
-# Copy built application from build stage
+# Copy built app
 COPY --from=build /app/dist ./dist
 
-# Create jobs directory for PVC mount
 RUN mkdir -p /app/jobs
 
 EXPOSE 4000
