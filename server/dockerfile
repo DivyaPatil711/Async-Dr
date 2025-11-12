@@ -2,37 +2,42 @@
 FROM node:20-slim AS build
 WORKDIR /app
 
+# Install OpenSSL (required by Prisma)
+RUN apt-get update -y && \
+    apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install all dependencies
 RUN npm install --legacy-peer-deps
 
-# Copy config files BEFORE Prisma generation
+# Copy tsconfig.json (needed for Prisma to detect CommonJS)
 COPY tsconfig.json ./
+
+# Copy Prisma schema
 COPY prisma ./prisma
 
-# CRITICAL: Clean and generate fresh
-RUN rm -rf node_modules/.prisma && \
-    rm -rf node_modules/@prisma && \
-    npx prisma generate
+# Generate Prisma Client with correct binary targets
+RUN npx prisma generate
 
-# Copy source AFTER Prisma generation
+# Copy source code
 COPY src ./src
 
-# Build
+# Build TypeScript
 RUN npm run build
-
-# Debug: Show what was generated
-RUN echo "=== Prisma Client Check ===" && \
-    (head -5 src/generated/prisma/client/index.js 2>/dev/null || \
-     head -5 node_modules/.prisma/client/index.js 2>/dev/null || \
-     echo "No Prisma client found")
 
 # --- runtime stage ---
 FROM node:20-slim
 WORKDIR /app
 
+# Install OpenSSL (required by Prisma at runtime)
+RUN apt-get update -y && \
+    apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Environment variables
 ENV NODE_ENV=production
 ENV PORT=4000
 ENV OLLAMA_HOST=https://ollama.com
@@ -43,18 +48,25 @@ ENV REFRESH_COOKIE_PATH=/api/auth/refresh
 ENV RATE_LIMIT_WINDOW_MS=60000
 ENV RATE_LIMIT_MAX=100
 
+# Copy package files
 COPY package*.json ./
+
+# Install production dependencies (includes TypeScript, Prisma)
 RUN npm install --legacy-peer-deps --only=production
 
+# Copy tsconfig.json
 COPY tsconfig.json ./
+
+# Copy Prisma schema
 COPY prisma ./prisma
 
-# Generate Prisma for production
+# Generate Prisma Client for production with correct binaries
 RUN npx prisma generate
 
-# Copy built app
+# Copy built application from build stage
 COPY --from=build /app/dist ./dist
 
+# Create jobs directory for PVC mount
 RUN mkdir -p /app/jobs
 
 EXPOSE 4000
