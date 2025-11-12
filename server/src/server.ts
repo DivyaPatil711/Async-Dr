@@ -230,6 +230,10 @@ api.use('/auth', authRouter);
 // global light limiter
 api.use(standardLimiter);
 
+app.get('/api/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 api.get('/health', (_req, res) => res.json({ ok: true }));
 // ---------- Health ----------
 
